@@ -9,8 +9,8 @@
     <video id="videoPlayer" controls></video>
     <script>
         (function(){
-            var url = 'output/mixkit-snowy-hill-in-a-forest-full-of-skiers-3342-full-hd_dash.mpd'; // Path to the DASH manifest file
-            var player = dashjs.MediaPlayer().create();
+            const url = 'output/forest-of-skiers_dash.mpd'; // Path to the DASH manifest file
+            const player = dashjs.MediaPlayer().create();
             player.initialize(document.querySelector("#videoPlayer"), url, true);
         })();
     </script>
