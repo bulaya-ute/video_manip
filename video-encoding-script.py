@@ -18,7 +18,11 @@ def calculate_bitrate(resolution):
     return bitrate_table.get(resolution, 1000)  # Default to 1000k if resolution not found
 
 
-def encode_and_package(vid_filename, res, out_dir):
+def encode_and_package(vid_filename, res, out_dir=None, mp4_dir=None):
+    # If no output directory is specified, create one based on input filename
+    if out_dir is None:
+        out_dir = os.path.splitext(os.path.basename(vid_filename))[0] + "_output"
+    
     # Ensure output directory exists
     os.makedirs(out_dir, exist_ok=True)
 
@@ -41,7 +45,16 @@ def encode_and_package(vid_filename, res, out_dir):
         for resolution in res:
             try:
                 height = int(resolution.replace('p', ''))
-                output_file = f"{base_name}_{resolution}.mp4"
+                
+                # Determine output filename and path
+                if mp4_dir:
+                    # Create mp4 directory if specified
+                    os.makedirs(mp4_dir, exist_ok=True)
+                    output_file = os.path.join(mp4_dir, f"{base_name}_{resolution}.mp4")
+                else:
+                    # Use default output in current directory
+                    output_file = f"{base_name}_{resolution}.mp4"
+                
                 bitrate = calculate_bitrate(resolution)
                 ffmpeg_cmd = [
                     "ffmpeg",
@@ -91,9 +104,13 @@ def encode_and_package(vid_filename, res, out_dir):
 if __name__ == "__main__":
     input_video_filename = "forest-of-skiers.mp4"  # Replace with your video filename
     resolutions = ["720p", "480p", "360p"]  # Replace with desired resolutions
-    output_dir = "output"  # Replace with desired output directory
-
-    if os.path.isfile(input_video_filename):
-        encode_and_package(input_video_filename, resolutions, output_dir)
-    else:
-        print(f"File {input_video_filename} not found.")
+    
+    # Example usages:
+    # 1. Use default output directory based on input filename
+    encode_and_package(input_video_filename, resolutions)
+    
+    # 2. Specify a custom output directory for DASH
+    encode_and_package(input_video_filename, resolutions, out_dir="custom_dash_output")
+    
+    # 3. Specify a separate directory for MP4 files
+    encode_and_package(input_video_filename, resolutions, mp4_dir="scaled_videos")
