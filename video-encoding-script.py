@@ -1,6 +1,7 @@
 import os
 import subprocess
 import logging
+from json import loads as j_loads
 
 # Bitrate lookup table for different resolutions
 bitrate_table = {
@@ -18,7 +19,62 @@ def calculate_bitrate(resolution):
     return bitrate_table.get(resolution, 1000)  # Default to 1000k if resolution not found
 
 
-def encode_and_package(vid_filename, res, output_dir: str = None, dash_dir: str = None, mp4_dir: str = None):
+def get_video_dimensions(video_path):
+    try:
+        # Run ffprobe command to get video information
+        command = [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "json",
+            video_path
+        ]
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        # Parse the JSON output
+        video_info = j_loads(result.stdout)
+        width = video_info['streams'][0]['width']
+        height = video_info['streams'][0]['height']
+
+        return width, height
+    except Exception as e:
+        print(f"Error: {e}")
+        return None, None
+
+
+def filter_and_sort_qualities(qualities, video_height):
+    """
+    Filters and sorts the given list of qualities based on the video height.
+    Ensures the filtered list is never empty by adding the lowest quality if needed.
+
+    Args:
+        qualities (list of str): List of qualities like ["480p", "360p"].
+        video_height (int): The height of the input video.
+
+    Returns:
+        list of str: Filtered and sorted list of qualities.
+    """
+    # Convert quality strings to integers for comparison
+    quality_heights = [int(q[:-1]) for q in qualities]
+
+    # Filter out qualities higher than the video height
+    filtered = [q for q, h in zip(qualities, quality_heights) if h <= video_height]
+
+    # Ensure the list is not empty; add the lowest quality if empty
+    if not filtered:
+        lowest_quality = min(qualities, key=lambda q: int(q[:-1]))
+        filtered.append(lowest_quality)
+
+    # Sort the filtered list in descending order of resolution
+    filtered.sort(key=lambda q: int(q[:-1]), reverse=True)
+
+    return filtered
+
+
+def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, dash_dir: str = None, mp4_dir: str = None):
+    resolutions = filter_and_sort_qualities(resolutions, get_video_dimensions(vid_filename)[1])
+
     # If no output directory is specified, create one based on input filename
     if output_dir is None:
         output_dir = os.path.splitext(os.path.basename(vid_filename))[0] + "_output"
@@ -52,7 +108,7 @@ def encode_and_package(vid_filename, res, output_dir: str = None, dash_dir: str 
 
     # Encode video into specified resolutions in MP4
     encoded_files = []
-    for resolution in res:
+    for resolution in resolutions:
         height = int(resolution.replace('p', ''))
         output_file = f"{mp4_dir}/{base_name}_{resolution}.mp4"
         os.makedirs(mp4_dir, exist_ok=True)
@@ -101,11 +157,9 @@ def encode_and_package(vid_filename, res, output_dir: str = None, dash_dir: str 
 
 if __name__ == "__main__":
     input_video_filename = "forest-of-skiers.mp4"  # Replace with your video filename
-    resolutions = ["480p", "360p", "144p"]  # Replace with desired resolutions
+    res = ["480p", "360p", "144p"]  # Replace with desired resolutions
 
-    # Example usages:
-    # 1. Use default output directory based on input filename
-    encode_and_package(input_video_filename, resolutions)
+    encode_and_package(input_video_filename, res)
 
     # 2. Specify a custom output directory for DASH
     # encode_and_package(input_video_filename, resolutions, out_dir="custom_dash_output")
