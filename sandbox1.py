@@ -1,50 +1,24 @@
-# import os
-# from typing import List
-#
-#
-# def find_mp4_files(directory: str) -> List[str]:
-#     """
-#     Recursively searches through all directories and subdirectories for .mp4 files,
-#     but includes an .mp4 file in the result list only if there is no corresponding .mpd file
-#     in the "{mp4_basename}_output/dash" directory. Skips directories that end with "_output".
-#
-#     Args:
-#         directory (str): The root directory to start the search.
-#
-#     Returns:
-#         List[str]: A list of absolute paths of .mp4 files meeting the condition.
-#     """
-#     result = []
-#
-#     for root, dirs, files in os.walk(directory):
-#         # Skip directories that end with "_output"
-#         dirs[:] = [d for d in dirs if not d.endswith("_output")]
-#
-#         for file in files:
-#             if not file.endswith(".mp4"):
-#                 continue
-#
-#             mp4_path = os.path.abspath(os.path.join(root, file))
-#             # Construct the potential path for the .mpd file
-#             base_name = os.path.splitext(file)[0]
-#             dash_dir = os.path.abspath(os.path.join(root, f"{base_name}_output", "dash"))
-#
-#             if os.path.isdir(dash_dir):
-#                 mpd_file = os.path.join(dash_dir, f"{base_name}_dash.mpd")
-#                 # print(mpd_file, os.path.exists(mpd_file))
-#                 if os.path.exists(mpd_file):
-#                     continue
-#
-#             result.append(mp4_path)
-#
-#     return result
-#
-#
-# # Example usage:
-# directory_path = "./"
-# mp4_files = find_mp4_files(directory_path)
-# [print(f) for f in mp4_files]
-# # print(mp4_files)
-#
-# # /home/bulaya/PycharmProjects/video_manip/supreme-dualist-stickman-animation_output/dash/supreme-dualist-stickman-animation_dash.mpd
-# # /home/bulaya/PycharmProjects/video_manip/supreme-dualist-stickman-animation_output/dash/supreme-dualist-stickman-animation.mpd False
+import os
+
+def get_basename_directory_path(file_path: str) -> str:
+    """
+    Returns the path of a directory named after the basename of the file,
+    in the same directory as the file, without checking or creating it.
+
+    Args:
+        file_path (str): The path to the file.
+
+    Returns:
+        str: The path to the directory named after the file's basename.
+    """
+    # Get the parent directory and file basename
+    parent_dir = os.path.dirname(file_path)
+    file_basename = os.path.splitext(os.path.basename(file_path))[0]
+
+    # Construct and return the directory path
+    return os.path.join(parent_dir, file_basename)
+
+# Example usage:
+file_path = "/path/to/your/file.mp4"
+directory_path = get_basename_directory_path(file_path)
+print(f"The directory path is: {directory_path}")
