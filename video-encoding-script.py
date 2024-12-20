@@ -2,6 +2,7 @@ import os
 import subprocess
 import logging
 from json import loads as j_loads
+from tqdm import tqdm
 
 # Bitrate lookup table for different resolutions
 bitrate_table = {
@@ -13,6 +14,7 @@ bitrate_table = {
     "360p": 800,
     "240p": 500,
 }
+standard_resolutions = ["1080p", "720p", "480p", "360p"]
 
 
 def calculate_bitrate(resolution):
@@ -72,7 +74,8 @@ def filter_and_sort_qualities(qualities, video_height):
     return filtered
 
 
-def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, dash_dir: str = None, mp4_dir: str = None):
+def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, dash_dir: str = None,
+                       mp4_dir: str = None):
     resolutions = filter_and_sort_qualities(resolutions, get_video_dimensions(vid_filename)[1])
 
     # If no output directory is specified, create one based on input filename
@@ -133,7 +136,7 @@ def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, 
     # Change to the DASH directory
     os.chdir(dash_dir)
 
-    dash_manifest_filename = f"{base_name}_dash.mpd"
+    dash_manifest_filename = f"play.mpd"
     ffmpeg_cmd = ["ffmpeg"]
     for encoded_file in encoded_files:
         ffmpeg_cmd += ["-i", encoded_file]
@@ -155,11 +158,49 @@ def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, 
     os.chdir(original_cwd)
 
 
-if __name__ == "__main__":
-    input_video_filename = "forest-of-skiers.mp4"  # Replace with your video filename
-    res = ["480p", "360p", "144p"]  # Replace with desired resolutions
+def find_mp4_files(directory: str) -> list[str]:
+    """
+    Recursively searches through all directories and subdirectories for .mp4 files,
+    but includes an .mp4 file in the result list only if there is no corresponding .mpd file
+    in the "{mp4_basename}_output/dash" directory. Skips directories that end with "_output".
 
-    encode_and_package(input_video_filename, res)
+    Args:
+        directory (str): The root directory to start the search.
+
+    Returns:
+        List[str]: A list of absolute paths of .mp4 files meeting the condition.
+    """
+    result = []
+
+    for root, dirs, files in os.walk(directory):
+        # Skip directories that end with "_output"
+        dirs[:] = [d for d in dirs if not d.endswith("_output")]
+
+        for file in files:
+            if not file.endswith(".mp4"):
+                continue
+
+            mp4_path = os.path.abspath(os.path.join(root, file))
+            # Construct the potential path for the .mpd file
+            base_name = os.path.splitext(file)[0]
+            dash_dir = os.path.abspath(os.path.join(root, f"{base_name}_output", "dash"))
+
+            if os.path.isdir(dash_dir):
+                mpd_file = os.path.join(dash_dir, f"{base_name}_dash.mpd")
+                # print(mpd_file, os.path.exists(mpd_file))
+                if os.path.exists(mpd_file):
+                    continue
+
+            result.append(mp4_path)
+
+    return result
+
+
+if __name__ == "__main__":
+    for input_video_filename in tqdm(find_mp4_files("./"), desc="Video encoding"):
+        # input_video_filename = "supreme-dualist-stickman-animation.mp4"  # Replace with your video filename
+
+        encode_and_package(input_video_filename, standard_resolutions)
 
     # 2. Specify a custom output directory for DASH
     # encode_and_package(input_video_filename, resolutions, out_dir="custom_dash_output")
