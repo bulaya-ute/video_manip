@@ -18,6 +18,25 @@ bitrate_table = {
 standard_resolutions = ["1080p", "720p", "480p", "360p"]
 
 
+def get_basename_directory_path(file_path: str) -> str:
+    """
+    Returns the path of a directory named after the basename of the file,
+    in the same directory as the file, without checking or creating it.
+
+    Args:
+        file_path (str): The path to the file.
+
+    Returns:
+        str: The path to the directory named after the file's basename.
+    """
+    # Get the parent directory and file basename
+    parent_dir = os.path.dirname(file_path)
+    file_basename = os.path.splitext(os.path.basename(file_path))[0]
+
+    # Construct and return the directory path
+    return os.path.join(parent_dir, file_basename)
+
+
 def calculate_bitrate(resolution):
     return bitrate_table.get(resolution, 1000)  # Default to 1000k if resolution not found
 
@@ -84,8 +103,7 @@ def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, 
 
     # If no output directory is specified, create one based on input filename
     if output_dir is None:
-        output_dir = os.path.splitext(os.path.basename(vid_filename))[0] + "_output"
-        output_dir = os.path.join(os.path.dirname(output_dir), output_dir)
+        output_dir = get_basename_directory_path(vid_filename)
 
     # If no dash directory is specified, create one within the output directory
     if dash_dir is None:
@@ -120,7 +138,7 @@ def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, 
             # If video is already the desired quality, copy the file
             shutil.copy(vid_filename, output_file)
             logging.info(f"Copied video: {output_file}")
-            print(f"Copied video: {output_file}")
+            # print(f"Copied video: {output_file}")
         else:
             bitrate = calculate_bitrate(resolution)
             ffmpeg_cmd = [
@@ -135,7 +153,7 @@ def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, 
             ]
             subprocess.run(ffmpeg_cmd, capture_output=True, check=True)
             logging.info(f"Successfully encoded {resolution}")
-            print(f"Encoded video: {output_file}")
+            # print(f"Encoded video: {output_file}")
 
         encoded_files.append(os.path.abspath(output_file))
     # Package encoded videos into DASH
@@ -158,7 +176,7 @@ def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, 
         "-media_seg_name", "chunk-stream$RepresentationID$-$Number%05d$.m4s",
         dash_manifest_filename
     ]
-    subprocess.run(ffmpeg_cmd, stdout=subprocess.DEVNULL, check=True)
+    subprocess.run(ffmpeg_cmd, capture_output=True, check=True)
     logging.info(f"DASH packaging complete: {dash_manifest_filename}")
 
     os.chdir(original_cwd)
