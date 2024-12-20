@@ -3,6 +3,7 @@ import subprocess
 import logging
 from json import loads as j_loads
 from tqdm import tqdm
+import shutil
 
 # Bitrate lookup table for different resolutions
 bitrate_table = {
@@ -77,33 +78,14 @@ def filter_and_sort_qualities(qualities, video_height):
     return filtered
 
 
-def get_basename_directory_path(file_path: str) -> str:
-    """
-    Returns the path of a directory named after the basename of the file,
-    in the same directory as the file, without checking or creating it.
-
-    Args:
-        file_path (str): The path to the file.
-
-    Returns:
-        str: The path to the directory named after the file's basename.
-    """
-    # Get the parent directory and file basename
-    parent_dir = os.path.dirname(file_path)
-    file_basename = os.path.splitext(os.path.basename(file_path))[0]
-
-    # Construct and return the directory path
-    return os.path.join(parent_dir, file_basename)
-
-
 def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, dash_dir: str = None,
                        mp4_dir: str = None):
     resolutions = filter_and_sort_qualities(resolutions, get_video_dimensions(vid_filename)[1])
 
-
     # If no output directory is specified, create one based on input filename
     if output_dir is None:
-        output_dir = os.path.abspath(get_basename_directory_path(vid_filename))
+        output_dir = os.path.splitext(os.path.basename(vid_filename))[0] + "_output"
+        output_dir = os.path.join(os.path.dirname(output_dir), output_dir)
 
     # If no dash directory is specified, create one within the output directory
     if dash_dir is None:
@@ -134,22 +116,28 @@ def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, 
         output_file = f"{mp4_dir}/{base_name}_{resolution}.mp4"
         os.makedirs(mp4_dir, exist_ok=True)
 
-        bitrate = calculate_bitrate(resolution)
-        ffmpeg_cmd = [
-            "ffmpeg",
-            "-i", vid_filename,
-            "-vf", f"scale=-2:{height}",
-            "-c:v", "libx264",
-            "-b:v", f"{bitrate}k",
-            "-c:a", "aac",
-            "-b:a", "128k",
-            "-y", output_file
-        ]
-        subprocess.run(ffmpeg_cmd, capture_output=True, check=True)
-        encoded_files.append(os.path.abspath(output_file))
-        print(f"Encoded video: {output_file}")
-        logging.info(f"Successfully encoded {resolution}")
+        if get_video_dimensions(vid_filename)[1] == height:
+            # If video is already the desired quality, copy the file
+            shutil.copy(vid_filename, output_file)
+            logging.info(f"Copied video: {output_file}")
+            print(f"Copied video: {output_file}")
+        else:
+            bitrate = calculate_bitrate(resolution)
+            ffmpeg_cmd = [
+                "ffmpeg",
+                "-i", vid_filename,
+                "-vf", f"scale=-2:{height}",
+                "-c:v", "libx264",
+                "-b:v", f"{bitrate}k",
+                "-c:a", "aac",
+                "-b:a", "128k",
+                "-y", output_file
+            ]
+            subprocess.run(ffmpeg_cmd, capture_output=True, check=True)
+            logging.info(f"Successfully encoded {resolution}")
+            print(f"Encoded video: {output_file}")
 
+        encoded_files.append(os.path.abspath(output_file))
     # Package encoded videos into DASH
     # Change to the DASH directory
     os.chdir(dash_dir)
@@ -170,7 +158,7 @@ def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, 
         "-media_seg_name", "chunk-stream$RepresentationID$-$Number%05d$.m4s",
         dash_manifest_filename
     ]
-    subprocess.run(ffmpeg_cmd, capture_output=True, check=True)
+    subprocess.run(ffmpeg_cmd, stdout=subprocess.DEVNULL, check=True)
     logging.info(f"DASH packaging complete: {dash_manifest_filename}")
 
     os.chdir(original_cwd)
@@ -215,16 +203,11 @@ def find_mp4_files(directory: str) -> list[str]:
 
 
 if __name__ == "__main__":
-    for input_video_filename in tqdm(find_mp4_files("./"), desc="Video encoding"):
+    video_dir = "./"
+    for input_video_filename in tqdm(find_mp4_files(video_dir), desc="Video encoding"):
         # input_video_filename = "supreme-dualist-stickman-animation.mp4"  # Replace with your video filename
         print(input_video_filename)
         try:
             encode_and_package(input_video_filename, standard_resolutions)
         except Exception as e:
             continue
-
-    # 2. Specify a custom output directory for DASH
-    # encode_and_package(input_video_filename, resolutions, out_dir="custom_dash_output")
-
-    # 3. Specify a separate directory for MP4 files
-    # encode_and_package(input_video_filename, resolutions, mp4_dir="scaled_videos")
