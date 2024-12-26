@@ -1,190 +1,232 @@
 import os
 import subprocess
 import logging
-import json
+from json import loads as j_loads
+from tqdm import tqdm
+import shutil
 
-# Configuration for resolutions and their corresponding parameters
-RESOLUTION_CONFIG = [
-    {"height": 720, "bitrate": 2500, "label": "720p"},
-    {"height": 480, "bitrate": 1000, "label": "480p"},
-    {"height": 360, "bitrate": 800, "label": "360p"}
-]
+# Bitrate lookup table for different resolutions
+bitrate_table = {
+    "2160p": 14000,
+    "1440p": 8000,
+    "1080p": 4500,
+    "720p": 2500,
+    "480p": 1000,
+    "360p": 800,
+    "240p": 500,
+}
+standard_resolutions = ["1080p", "720p", "480p", "360p"]
 
-def get_video_metadata(input_video):
+
+def get_basename_directory_path(file_path: str) -> str:
     """
-    Retrieve video metadata using FFprobe.
-    
+    Returns the path of a directory named after the basename of the file,
+    in the same directory as the file, without checking or creating it.
+
     Args:
-        input_video (str): Path to input video file
-    
+        file_path (str): The path to the file.
+
     Returns:
-        dict: Video metadata including width, height, and duration
+        str: The path to the directory named after the file's basename.
     """
+    # Get the parent directory and file basename
+    parent_dir = os.path.dirname(file_path)
+    file_basename = os.path.splitext(os.path.basename(file_path))[0]
+
+    # Construct and return the directory path
+    return os.path.join(parent_dir, file_basename)
+
+
+def calculate_bitrate(resolution):
+    return bitrate_table.get(resolution, 1000)  # Default to 1000k if resolution not found
+
+
+def get_video_dimensions(video_path):
     try:
-        cmd = [
-            "ffprobe", 
-            "-v", "quiet", 
-            "-print_format", "json", 
-            "-show_format", 
-            "-show_streams", 
-            input_video
+        if not os.path.isfile(f"{video_path}"):
+            raise FileNotFoundError(f'Video file not found')
+
+        # Run ffprobe command to get video information
+        command = [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "json",
+            video_path
         ]
-        
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        metadata = json.loads(result.stdout)
-        
-        # Extract video stream information
-        video_stream = next(
-            (stream for stream in metadata.get('streams', []) 
-             if stream.get('codec_type') == 'video'), 
-            None
-        )
-        
-        if not video_stream:
-            raise ValueError("No video stream found")
-        
-        return {
-            'width': int(video_stream.get('width', 0)),
-            'height': int(video_stream.get('height', 0)),
-            'duration': float(metadata.get('format', {}).get('duration', 0))
-        }
-    except (subprocess.CalledProcessError, json.JSONDecodeError, ValueError) as e:
-        logging.error(f"Error retrieving video metadata: {e}")
-        raise
+        result = subprocess.run(command, capture_output=True, text=True)
 
-def calculate_scaled_dimensions(original_width, original_height, target_height):
-    """
-    Calculate scaled width maintaining aspect ratio.
-    
-    Args:
-        original_width (int): Original video width
-        original_height (int): Original video height
-        target_height (int): Target height for scaling
-    
-    Returns:
-        tuple: (scaled_width, scaled_height)
-    """
-    aspect_ratio = original_width / original_height
-    scaled_width = int(target_height * aspect_ratio)
-    
-    # Ensure width is even (required by most video codecs)
-    scaled_width = scaled_width if scaled_width % 2 == 0 else scaled_width + 1
-    
-    return (scaled_width, target_height)
+        # Parse the JSON output
+        video_info = j_loads(result.stdout)
+        width = video_info['streams'][0]['width']
+        height = video_info['streams'][0]['height']
 
-def optimized_encode_and_package(input_video, output_dir=None, mp4_dir=None):
-    """
-    Optimized video encoding and DASH packaging in a single pass.
-    
-    Args:
-        input_video (str): Path to input video file
-        output_dir (str, optional): Directory for DASH output
-        mp4_dir (str, optional): Directory for MP4 output
-    """
-    # Configure logging
-    logging.basicConfig(level=logging.INFO, 
-                        format='%(asctime)s - %(levelname)s - %(message)s')
-    
-    # Determine output directories
-    base_name = os.path.splitext(os.path.basename(input_video))[0]
-    output_dir = output_dir or f"{base_name}_dash_output"
-    mp4_dir = mp4_dir or f"{base_name}_scaled_videos"
-    
-    # Create output directories
-    os.makedirs(output_dir, exist_ok=True)
-    if mp4_dir:
-        os.makedirs(mp4_dir, exist_ok=True)
-    
-    # Get video metadata
-    try:
-        metadata = get_video_metadata(input_video)
+        return width, height
     except Exception as e:
-        logging.error(f"Could not process video metadata: {e}")
-        return
-    
-    # Prepare FFmpeg command
-    ffmpeg_cmd = [
-        "ffmpeg", 
-        "-i", input_video,
-        "-filter_complex", ""  # Will be populated dynamically
-    ]
-    
-    # Prepare filter complex and output mappings
-    filter_parts = []
-    input_mapping = "[0:v]split={}[{}]".format(
-        len(RESOLUTION_CONFIG), 
-        ']['.join(f'v{i}' for i in range(len(RESOLUTION_CONFIG)))
-    )
-    filter_parts.append(input_mapping)
-    
-    # Prepare DASH packaging components
-    dash_inputs = []
-    dash_maps = []
-    mp4_outputs = []
-    
-    for i, config in enumerate(RESOLUTION_CONFIG):
-        # Calculate scaled dimensions
-        scaled_width, scaled_height = calculate_scaled_dimensions(
-            metadata['width'], metadata['height'], config['height']
-        )
-        
-        # Scale and encode part
-        scale_part = f"[v{i}]scale={scaled_width}:{scaled_height},split=2[dash{i}][mp4{i}]"
-        filter_parts.append(scale_part)
-        
-        # DASH stream preparation
-        dash_inputs.append(f"[dash{i}]")
-        dash_maps.append(f"-map", f"{len(dash_inputs)-1}")
-        
-        # MP4 output preparation if mp4_dir is specified
-        if mp4_dir:
-            mp4_path = os.path.join(mp4_dir, f"{base_name}_{config['label']}.mp4")
-            mp4_outputs.extend([
-                f"-map", f"[mp4{i}]",
+        print(f"Error getting dimensions of {video_path}: {e}")
+        return None, None
+
+
+def filter_and_sort_qualities(qualities, video_height):
+    """
+    Filters and sorts the given list of qualities based on the video height.
+    Ensures the filtered list is never empty by adding the lowest quality if needed.
+
+    Args:
+        qualities (list of str): List of qualities like ["480p", "360p"].
+        video_height (int): The height of the input video.
+
+    Returns:
+        list of str: Filtered and sorted list of qualities.
+    """
+    # Convert quality strings to integers for comparison
+    quality_heights = [int(q[:-1]) for q in qualities]
+
+    # Filter out qualities higher than the video height
+    filtered = [q for q, h in zip(qualities, quality_heights) if h <= video_height]
+
+    # Ensure the list is not empty; add the lowest quality if empty
+    if not filtered:
+        lowest_quality = min(qualities, key=lambda q: int(q[:-1]))
+        filtered.append(lowest_quality)
+
+    # Sort the filtered list in descending order of resolution
+    filtered.sort(key=lambda q: int(q[:-1]), reverse=True)
+
+    return filtered
+
+
+def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, dash_dir: str = None,
+                       mp4_dir: str = None):
+    resolutions = filter_and_sort_qualities(resolutions, get_video_dimensions(vid_filename)[1])
+
+    # If no output directory is specified, create one based on input filename
+    if output_dir is None:
+        output_dir = get_basename_directory_path(vid_filename) + "_output"
+
+    # If no dash directory is specified, create one within the output directory
+    if dash_dir is None:
+        dash_dir = f"{output_dir}/dash"
+
+    # If no mp4 directory is specified, create one within the output directory
+    if mp4_dir is None:
+        mp4_dir = f"{output_dir}/mp4"
+
+    # Ensure output directory exists
+    os.makedirs(dash_dir, exist_ok=True)
+    os.makedirs(mp4_dir, exist_ok=True)
+
+    # Base name for output files
+    base_name = os.path.splitext(os.path.basename(vid_filename))[0]
+
+    # Configure logging
+    logging.basicConfig(filename=os.path.join(dash_dir, 'encoding.log'), level=logging.INFO,
+                        format='%(asctime)s - %(levelname)s - %(message)s')
+
+    # Save the current working directory
+    original_cwd = os.getcwd()
+
+    # Encode video into specified resolutions in MP4
+    encoded_files = []
+    for resolution in resolutions:
+        height = int(resolution.replace('p', ''))
+        output_file = f"{mp4_dir}/{base_name}_{resolution}.mp4"
+        os.makedirs(mp4_dir, exist_ok=True)
+
+        if get_video_dimensions(vid_filename)[1] == height:
+            # If video is already the desired quality, copy the file
+            shutil.copy(vid_filename, output_file)
+            logging.info(f"Copied video: {output_file}")
+            # print(f"Copied video: {output_file}")
+        else:
+            bitrate = calculate_bitrate(resolution)
+            ffmpeg_cmd = [
+                "ffmpeg",
+                "-i", vid_filename,
+                "-vf", f"scale=-2:{height}",
                 "-c:v", "libx264",
-                "-b:v", f"{config['bitrate']}k",
+                "-b:v", f"{bitrate}k",
                 "-c:a", "aac",
                 "-b:a", "128k",
-                mp4_path
-            ])
-    
-    # Combine filter complex
-    ffmpeg_cmd.extend([
-        "-filter_complex", "; ".join(filter_parts)
-    ])
-    
-    # Add DASH packaging parameters
-    dash_manifest = os.path.join(output_dir, f"{base_name}_dash.mpd")
-    ffmpeg_cmd.extend([
-        "-use_template", "1",
-        "-use_timeline", "1",
-        "-seg_duration", "4",
-        "-init_seg_name", "init-stream$RepresentationID$.m4s",
-        "-media_seg_name", "chunk-stream$RepresentationID$-$Number%05d$.m4s"
-    ])
-    
-    # Combine all components
-    ffmpeg_cmd.extend(dash_inputs)
-    ffmpeg_cmd.extend(dash_maps)
-    if mp4_dir:
-        ffmpeg_cmd.extend(mp4_outputs)
-    ffmpeg_cmd.extend([
+                "-y", output_file
+            ]
+            subprocess.run(ffmpeg_cmd, capture_output=True, check=True)
+            logging.info(f"Successfully encoded {resolution}")
+            # print(f"Encoded video: {output_file}")
+
+        encoded_files.append(os.path.abspath(output_file))
+    # Package encoded videos into DASH
+    # Change to the DASH directory
+    os.chdir(dash_dir)
+
+    dash_manifest_filename = f"{base_name}_dash.mpd"
+    ffmpeg_cmd = ["ffmpeg"]
+    for encoded_file in encoded_files:
+        ffmpeg_cmd += ["-i", encoded_file]
+    for i in range(len(encoded_files)):
+        ffmpeg_cmd += ["-map", str(i)]
+    ffmpeg_cmd += [
+        "-c", "copy",
         "-f", "dash",
-        dash_manifest
-    ])
-    
-    # Execute FFmpeg command
-    try:
-        logging.info("Starting optimized encoding and packaging...")
-        subprocess.run(ffmpeg_cmd, check=True)
-        logging.info("Encoding and packaging completed successfully.")
-    except subprocess.CalledProcessError as e:
-        logging.error(f"Error during encoding and packaging: {e}")
+        "-use_timeline", "1",
+        "-use_template", "1",
+        "-seg_duration", "2",
+        "-init_seg_name", "init-stream$RepresentationID$.m4s",
+        "-media_seg_name", "chunk-stream$RepresentationID$-$Number%05d$.m4s",
+        dash_manifest_filename
+    ]
+    subprocess.run(ffmpeg_cmd, capture_output=True, check=True)
+    logging.info(f"DASH packaging complete: {dash_manifest_filename}")
+
+    os.chdir(original_cwd)
+
+
+def find_mp4_files(directory: str) -> list[str]:
+    """
+    Recursively searches through all directories and subdirectories for .mp4 files,
+    but includes an .mp4 file in the result list only if there is no corresponding .mpd file
+    in the "{mp4_basename}_output/dash" directory. Skips directories that end with "_output".
+
+    Args:
+        directory (str): The root directory to start the search.
+
+    Returns:
+        List[str]: A list of absolute paths of .mp4 files meeting the condition.
+    """
+    result = []
+
+    for root, dirs, files in os.walk(directory):
+        # Skip directories that end with "_output"
+        dirs[:] = [d for d in dirs if not d.endswith("_output")]
+
+        for file in files:
+            if not file.endswith(".mp4"):
+                continue
+
+            mp4_path = os.path.abspath(os.path.join(root, file))
+            # Construct the potential path for the .mpd file
+            base_name = os.path.splitext(file)[0]
+            dash_dir = os.path.abspath(os.path.join(root, f"{base_name}_output", "dash"))
+
+            if os.path.isdir(dash_dir):
+                mpd_file = os.path.join(dash_dir, f"{base_name}_dash.mpd")
+                print(mpd_file, os.path.exists(mpd_file))
+                if os.path.exists(mpd_file):
+                    continue
+
+            result.append(mp4_path)
+
+    return result
+
 
 if __name__ == "__main__":
-    input_video = "forest-of-skiers.mp4"
-    
-    # Example usage scenarios
-    optimized_encode_and_package(input_video)  # Default output
-    optimized_encode_and_package(input_video, output_dir="custom_dash_output")
-    optimized_encode_and_package(input_video, mp4_dir="scaled_videos")
+    video_dir = "."
+
+    for input_video_filename in tqdm(find_mp4_files(video_dir), desc="Video encoding"):
+        # input_video_filename = "supreme-dualist-stickman-animation.mp4"  # Replace with your video filename
+        print(input_video_filename)
+        try:
+            encode_and_package(input_video_filename, standard_resolutions)
+        except Exception as e:
+            continue

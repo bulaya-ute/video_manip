@@ -42,30 +42,30 @@ def calculate_bitrate(resolution):
 
 
 def get_video_dimensions(video_path):
-    try:
-        if not os.path.isfile(f"{video_path}"):
-            raise FileNotFoundError(f'Video file not found')
+    # try:
+    if not os.path.isfile(f"{video_path}"):
+        raise FileNotFoundError(f'Video file not found')
 
-        # Run ffprobe command to get video information
-        command = [
-            "ffprobe",
-            "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=width,height",
-            "-of", "json",
-            video_path
-        ]
-        result = subprocess.run(command, capture_output=True, text=True)
+    # Run ffprobe command to get video information
+    command = [
+        "ffprobe",
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "json",
+        video_path
+    ]
+    result = subprocess.run(command, capture_output=True, text=True)
 
-        # Parse the JSON output
-        video_info = j_loads(result.stdout)
-        width = video_info['streams'][0]['width']
-        height = video_info['streams'][0]['height']
+    # Parse the JSON output
+    video_info = j_loads(result.stdout)
+    width = video_info['streams'][0]['width']
+    height = video_info['streams'][0]['height']
 
-        return width, height
-    except Exception as e:
-        print(f"Error getting dimensions of {video_path}: {e}")
-        return None, None
+    return width, height
+    # except Exception as e:
+    #     print(f"Error getting dimensions of {video_path}: {e}")
+    #     return None, None
 
 
 def filter_and_sort_qualities(qualities, video_height):
@@ -151,7 +151,7 @@ def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, 
                 "-b:a", "128k",
                 "-y", output_file
             ]
-            subprocess.run(ffmpeg_cmd, capture_output=True, check=True)
+            subprocess.run(ffmpeg_cmd, capture_output=False, check=True)
             logging.info(f"Successfully encoded {resolution}")
             # print(f"Encoded video: {output_file}")
 
@@ -176,7 +176,7 @@ def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, 
         "-media_seg_name", "chunk-stream$RepresentationID$-$Number%05d$.m4s",
         dash_manifest_filename
     ]
-    subprocess.run(ffmpeg_cmd, capture_output=True, check=True)
+    subprocess.run(ffmpeg_cmd, capture_output=False, check=True)
     logging.info(f"DASH packaging complete: {dash_manifest_filename}")
 
     os.chdir(original_cwd)
@@ -221,11 +221,13 @@ def find_mp4_files(directory: str) -> list[str]:
 
 
 if __name__ == "__main__":
-    video_dir = "./"
-    for input_video_filename in tqdm(find_mp4_files(video_dir), desc="Video encoding"):
-        # input_video_filename = "supreme-dualist-stickman-animation.mp4"  # Replace with your video filename
-        print(input_video_filename)
-        try:
-            encode_and_package(input_video_filename, standard_resolutions)
-        except Exception as e:
-            continue
+    # video_dir = "./"
+    # for input_video_filename in tqdm(find_mp4_files(video_dir), desc="Video encoding"):
+    #     # input_video_filename = "supreme-dualist-stickman-animation.mp4"  # Replace with your video filename
+    #     print(input_video_filename)
+    #     try:
+    #         encode_and_package(input_video_filename, standard_resolutions)
+    #     except Exception as e:
+    #         continue
+
+    encode_and_package("stickman-animation.mp4", standard_resolutions)
