@@ -12,6 +12,25 @@ bitrate_table = {
 }
 
 
+def get_basename_directory_path(file_path: str) -> str:
+    """
+    Returns the path of a directory named after the basename of the file,
+    in the same directory as the file, without checking or creating it.
+
+    Args:
+        file_path (str): The path to the file.
+
+    Returns:
+        str: The path to the directory named after the file's basename.
+    """
+    # Get the parent directory and file basename
+    parent_dir = os.path.dirname(file_path)
+    file_basename = os.path.splitext(os.path.basename(file_path))[0]
+
+    # Construct and return the directory path
+    return os.path.join(parent_dir, file_basename)
+
+
 def filter_and_sort_qualities(qualities, video_height):
     """
     Filters and sorts the given list of qualities based on the video height.
@@ -45,31 +64,12 @@ def calculate_bitrate(resolution):
     return bitrate_table.get(resolution, 1000)  # Default to 1000k if resolution not found
 
 
-def scale_video(input_file: str, output_dir: str, heights: list[int]) -> None:
-    """
-    Scales a video to multiple heights and saves the output videos.
-
-    Parameters:
-    input_file (str): Path to the input video file.
-    output_dir (str): Directory where the scaled videos will be saved.
-    heights (list[int]): List of video heights to scale the input video.
-    """
-    os.makedirs(output_dir, exist_ok=True)  # Ensure output directory exists
-    for height in heights:
-        output_file = os.path.join(output_dir, f"{os.path.splitext(os.path.basename(input_file))[0]}_{height}.mp4")
-        command = [
-            "ffmpeg", "-i", input_file, "-vf", f"scale=-1:{height}",
-            "-c:v", "libx264", "-preset", "slow", "-crf", "23", "-c:a", "copy", output_file
-        ]
-        try:
-            subprocess.run(command, check=True)
-            print(f"Scaled video saved to: {output_file}")
-        except subprocess.CalledProcessError as e:
-            print(f"Error scaling video to height {height}: {e}")
-
-
-def scale_video2(vid_filename, resolutions: list[str], output_dir: str = None) -> None:
+def scale_video(vid_filename, resolutions: list[str], output_dir: str = None) -> None:
     base_name = os.path.splitext(os.path.basename(vid_filename))[0]
+
+    # If no output directory is specified, create one based on input filename
+    if output_dir is None:
+        output_dir = get_basename_directory_path(vid_filename)
 
     mp4_dir = output_dir
     for resolution in resolutions:
@@ -92,6 +92,39 @@ def scale_video2(vid_filename, resolutions: list[str], output_dir: str = None) -
         # print(f"Encoded video: {output_file}")
 
 
+def split_video(input_file: str, output_dir: str) -> None:
+    """
+    Splits a video into segments not exceeding 3 seconds each.
+
+    Parameters:
+    input_file (str): Path to the input video file.
+    output_dir (str): Directory where the segments will be saved.
+    """
+    os.makedirs(output_dir, exist_ok=True)  # Ensure output directory exists
+    output_pattern = os.path.join(output_dir, "segment_%d.m4v")
+    command = [
+        "ffmpeg",
+        "-i", input_file,
+        "-c", "copy",
+        "-map", "0",
+        "-f", "segment", "-segment_time", "3", output_pattern
+    ]
+    try:
+        subprocess.run(command, check=True)
+        print(f"Video split into segments in: {output_dir}")
+    except subprocess.CalledProcessError as e:
+        print(f"Error splitting video: {e}")
+
+
+def create_dash_manifest():
+    raise NotImplementedError
+
+
 if __name__ == "__main__":
-    scale_video2("stickman-animation.mp4", ["240p", "480p", "720p", "1080p"],
-                 "dash_test/mp4")
+    # scale_video("stickman-animation.mp4", ["240p", "480p", "720p", "1080p"],
+    #             "dash_test/mp4")
+
+    split_video("dash_test/mp4/stickman-animation_240p.mp4", "dash_test/dash/240p/")
+    split_video("dash_test/mp4/stickman-animation_480p.mp4", "dash_test/dash/480p/")
+    split_video("dash_test/mp4/stickman-animation_720p.mp4", "dash_test/dash/720p/")
+    split_video("dash_test/mp4/stickman-animation_1080p.mp4", "dash_test/dash/1080p/")

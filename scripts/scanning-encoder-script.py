@@ -15,7 +15,7 @@ bitrate_table = {
     "360p": 800,
     "240p": 500,
 }
-standard_resolutions = ["1080p", "720p", "480p", "360p"]
+standard_resolutions = ["1080p", "720p", "360p", "240p"]
 
 
 def get_basename_directory_path(file_path: str) -> str:
@@ -42,30 +42,30 @@ def calculate_bitrate(resolution):
 
 
 def get_video_dimensions(video_path):
-    # try:
-    if not os.path.isfile(f"{video_path}"):
-        raise FileNotFoundError(f'Video file not found')
+    try:
+        if not os.path.isfile(f"{video_path}"):
+            raise FileNotFoundError(f'Video file not found')
 
-    # Run ffprobe command to get video information
-    command = [
-        "ffprobe",
-        "-v", "error",
-        "-select_streams", "v:0",
-        "-show_entries", "stream=width,height",
-        "-of", "json",
-        video_path
-    ]
-    result = subprocess.run(command, capture_output=True, text=True)
+        # Run ffprobe command to get video information
+        command = [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "json",
+            video_path
+        ]
+        result = subprocess.run(command, capture_output=True, text=True)
 
-    # Parse the JSON output
-    video_info = j_loads(result.stdout)
-    width = video_info['streams'][0]['width']
-    height = video_info['streams'][0]['height']
+        # Parse the JSON output
+        video_info = j_loads(result.stdout)
+        width = video_info['streams'][0]['width']
+        height = video_info['streams'][0]['height']
 
-    return width, height
-    # except Exception as e:
-    #     print(f"Error getting dimensions of {video_path}: {e}")
-    #     return None, None
+        return width, height
+    except Exception as e:
+        print(f"Error getting dimensions of {video_path}: {e}")
+        return None, None
 
 
 def filter_and_sort_qualities(qualities, video_height):
@@ -103,7 +103,7 @@ def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, 
 
     # If no output directory is specified, create one based on input filename
     if output_dir is None:
-        output_dir = get_basename_directory_path(vid_filename)
+        output_dir = get_basename_directory_path(vid_filename) + "_output"
 
     # If no dash directory is specified, create one within the output directory
     if dash_dir is None:
@@ -134,7 +134,7 @@ def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, 
         output_file = f"{mp4_dir}/{base_name}_{resolution}.mp4"
         os.makedirs(mp4_dir, exist_ok=True)
 
-        if False:  #get_video_dimensions(vid_filename)[1] == height:
+        if get_video_dimensions(vid_filename)[1] == height:
             # If video is already the desired quality, copy the file
             shutil.copy(vid_filename, output_file)
             logging.info(f"Copied video: {output_file}")
@@ -151,7 +151,7 @@ def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, 
                 "-b:a", "128k",
                 "-y", output_file
             ]
-            subprocess.run(ffmpeg_cmd, capture_output=False, check=True)
+            subprocess.run(ffmpeg_cmd, capture_output=True, check=True)
             logging.info(f"Successfully encoded {resolution}")
             # print(f"Encoded video: {output_file}")
 
@@ -161,12 +161,9 @@ def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, 
     os.chdir(dash_dir)
 
     dash_manifest_filename = f"{base_name}_dash.mpd"
-
     ffmpeg_cmd = ["ffmpeg"]
     for encoded_file in encoded_files:
         ffmpeg_cmd += ["-i", encoded_file]
-        os.makedirs()
-
     for i in range(len(encoded_files)):
         ffmpeg_cmd += ["-map", str(i)]
     ffmpeg_cmd += [
@@ -175,25 +172,29 @@ def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, 
         "-use_timeline", "1",
         "-use_template", "1",
         "-seg_duration", "2",
-        # "-init_seg_name", "init-stream$RepresentationID$.m4s",
-        # "-media_seg_name", "chunk-stream$RepresentationID$-$Number$.m4s",
-        "-init_seg_name", "$RepresentationID$/$RepresentationID$_0.m4v",
-        "-media_seg_name", "$RepresentationID$/$RepresentationID$_$Number$.m4v",
+        "-init_seg_name", "init-stream$RepresentationID$.m4s",
+        "-media_seg_name", "chunk-stream$RepresentationID$-$Number%05d$.m4s",
         dash_manifest_filename
     ]
-    subprocess.run(ffmpeg_cmd, capture_output=False, check=True)
+    subprocess.run(ffmpeg_cmd, capture_output=True, check=True)
     logging.info(f"DASH packaging complete: {dash_manifest_filename}")
 
     os.chdir(original_cwd)
 
 
-def find_mp4_files(directory: str) -> list[str]:
+def is_contained_in_dir(path: str, containing_dir: str):
+    common_prefix = os.path.commonpath([path, containing_dir])
+    return os.path.samefile(common_prefix, path) or os.path.commonpath([path, containing_dir]) == containing_dir
+
+
+def find_mp4_files(directory: str, exclude: list = None) -> list[str]:
     """
     Recursively searches through all directories and subdirectories for .mp4 files,
     but includes an .mp4 file in the result list only if there is no corresponding .mpd file
     in the "{mp4_basename}_output/dash" directory. Skips directories that end with "_output".
 
     Args:
+        exclude:
         directory (str): The root directory to start the search.
 
     Returns:
@@ -205,7 +206,22 @@ def find_mp4_files(directory: str) -> list[str]:
         # Skip directories that end with "_output"
         dirs[:] = [d for d in dirs if not d.endswith("_output")]
 
+        # Skip the current root directory if it should be excluded
+        for exclude_path in exclude:
+            if is_contained_in_dir(root, exclude_path):
+                break
+        else:
+            continue
+
         for file in files:
+
+            # Skip the current file if it should be excluded
+            for exclude_path in exclude:
+                if is_contained_in_dir(file, exclude_path):
+                    break
+            else:
+                continue
+
             if not file.endswith(".mp4"):
                 continue
 
@@ -216,7 +232,7 @@ def find_mp4_files(directory: str) -> list[str]:
 
             if os.path.isdir(dash_dir):
                 mpd_file = os.path.join(dash_dir, f"{base_name}_dash.mpd")
-                print(mpd_file, os.path.exists(mpd_file))
+                # print(mpd_file, os.path.exists(mpd_file))
                 if os.path.exists(mpd_file):
                     continue
 
@@ -226,13 +242,12 @@ def find_mp4_files(directory: str) -> list[str]:
 
 
 if __name__ == "__main__":
-    # video_dir = "./"
-    # for input_video_filename in tqdm(find_mp4_files(video_dir), desc="Video encoding"):
-    #     # input_video_filename = "supreme-dualist-stickman-animation.mp4"  # Replace with your video filename
-    #     print(input_video_filename)
-    #     try:
-    #         encode_and_package(input_video_filename, standard_resolutions)
-    #     except Exception as e:
-    #         continue
+    video_dir = "/content/drive/MyDrive/ZitFuse"
 
-    encode_and_package("stickman-animation.mp4", standard_resolutions)
+    for input_video_filename in tqdm(find_mp4_files(video_dir), desc="Video encoding"):
+        # input_video_filename = "supreme-dualist-stickman-animation.mp4"  # Replace with your video filename
+        # print(input_video_filename)
+        try:
+            encode_and_package(input_video_filename, standard_resolutions)
+        except Exception as e:
+            continue
