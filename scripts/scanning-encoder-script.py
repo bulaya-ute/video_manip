@@ -2,6 +2,8 @@ import os
 import subprocess
 import logging
 from json import loads as j_loads
+from pathlib import Path
+
 from tqdm import tqdm
 import shutil
 
@@ -183,11 +185,27 @@ def encode_and_package(vid_filename, resolutions: list, output_dir: str = None, 
 
 
 def is_contained_in_dir(path: str, containing_dir: str):
-    common_prefix = os.path.commonpath([path, containing_dir])
-    return os.path.samefile(common_prefix, path) or os.path.commonpath([path, containing_dir]) == containing_dir
+    """
+    Check if path is the same as or a subdirectory of containing_dir.
+
+    Args:
+        path (str): The path to a file or directory.
+        containing_dir (str): The path to a directory.
+
+    Returns:
+        bool: True if path1 is the same as or a subdirectory of path2, False otherwise.
+    """
+    # Convert to absolute paths
+    path = Path(path).resolve()
+    containing_dir = Path(containing_dir).resolve()
+
+    # Check if path is containing_dir or a subpath of containing_dir
+    # print(f'Path:{path}    Containing_dir:{containing_dir}    '
+    #       f'{path == containing_dir or path.is_relative_to(containing_dir)}')
+    return path == containing_dir or path.is_relative_to(containing_dir)
 
 
-def find_mp4_files(directory: str, exclude: list = None) -> list[str]:
+def find_mp4_files(directory: str, exclude: list = None, overwrite_dash=True) -> list[str]:
     """
     Recursively searches through all directories and subdirectories for .mp4 files,
     but includes an .mp4 file in the result list only if there is no corresponding .mpd file
@@ -202,49 +220,57 @@ def find_mp4_files(directory: str, exclude: list = None) -> list[str]:
     """
     result = []
 
+    if exclude is None:
+        exclude = []
+
     for root, dirs, files in os.walk(directory):
         # Skip directories that end with "_output"
         dirs[:] = [d for d in dirs if not d.endswith("_output")]
 
         # Skip the current root directory if it should be excluded
         for exclude_path in exclude:
-            if is_contained_in_dir(root, exclude_path):
+            if not is_contained_in_dir(root, exclude_path):
                 break
         else:
+            # Skip the current root directory if it should be excluded
             continue
+
+        print(123, files)
 
         for file in files:
 
-            # Skip the current file if it should be excluded
-            for exclude_path in exclude:
-                if is_contained_in_dir(file, exclude_path):
-                    break
-            else:
-                continue
 
             if not file.endswith(".mp4"):
                 continue
 
             mp4_path = os.path.abspath(os.path.join(root, file))
+            # Skip the current file if it should be excluded
+            for exclude_path in exclude:
+                print(f"{exclude_path} -> {mp4_path}")
+                if not is_contained_in_dir(mp4_path, exclude_path):
+                    break
+            else:
+                continue
             # Construct the potential path for the .mpd file
             base_name = os.path.splitext(file)[0]
             dash_dir = os.path.abspath(os.path.join(root, f"{base_name}_output", "dash"))
 
-            if os.path.isdir(dash_dir):
+            if os.path.isdir(dash_dir) and not overwrite_dash:
                 mpd_file = os.path.join(dash_dir, f"{base_name}_dash.mpd")
                 # print(mpd_file, os.path.exists(mpd_file))
                 if os.path.exists(mpd_file):
                     continue
-
             result.append(mp4_path)
 
     return result
 
 
 if __name__ == "__main__":
-    video_dir = "/content/drive/MyDrive/ZitFuse"
+    video_dir = "../stickman-animation"
 
-    for input_video_filename in tqdm(find_mp4_files(video_dir), desc="Video encoding"):
+    mp4_files = find_mp4_files(video_dir, exclude=[f"{video_dir}/mp4/stickman-animation_1080p.mp4"])
+    print("Discovered MP4s:", mp4_files)
+    for input_video_filename in tqdm(mp4_files, desc="Video encoding"):
         # input_video_filename = "supreme-dualist-stickman-animation.mp4"  # Replace with your video filename
         # print(input_video_filename)
         try:
